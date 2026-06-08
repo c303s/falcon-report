@@ -12,6 +12,15 @@ The main script is `falcon_report.py`.
 
 It uses only the Python standard library (no SDK and no third-party Python package dependencies).
 
+## Files
+
+- `falcon_report.py`
+- `install.sh`
+- `api_scopes.txt`
+- `requirements.md`
+- `.gitignore`
+- `README.md`
+
 ## Requirements
 
 - Python 3.10 or newer

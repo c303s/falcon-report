@@ -3217,20 +3217,21 @@ def build_html_report(range_label: str, gathered: GatheredData) -> str:
 
 
 def write_html_report(range_label: str, gathered: GatheredData) -> Path:
-        print("Generating HTML report...", end=" ", flush=True)
-        report_html = build_html_report(range_label, gathered)
-        print("done")
-        output_path = Path.cwd() / "current.html"
-        print(f"Writing {output_path.name}...", end=" ", flush=True)
-        output_path.write_text(report_html, encoding="utf-8")
-        print("done")
-        from datetime import datetime as _dt
-        ts = _dt.now().strftime('%Y-%m-%d-%H-%M')
-        archive_path = Path.cwd() / f"current-{ts}.html"
-        print(f"Writing archive {archive_path.name}...", end=" ", flush=True)
-        archive_path.write_text(report_html, encoding="utf-8")
-        print("done")
-        return output_path
+    print("Generating HTML report...", end=" ", flush=True)
+    report_html = build_html_report(range_label, gathered)
+    print("done")
+    output_path = Path.cwd() / "falcon_report.html"
+    print(f"Writing {output_path.name}...", end=" ", flush=True)
+    output_path.write_text(report_html, encoding="utf-8")
+    print("done")
+    from datetime import datetime as _dt
+
+    ts = _dt.now().strftime('%Y-%m-%d-%H-%M')
+    archive_path = Path.cwd() / f"falcon_report_{ts}.html"
+    print(f"Writing archive {archive_path.name}...", end=" ", flush=True)
+    archive_path.write_text(report_html, encoding="utf-8")
+    print("done")
+    return output_path
 
 
 def main() -> int:
@@ -3262,7 +3263,7 @@ def main() -> int:
     print()
     gathered = run_with_spinner("Gathering data ...", lambda: gather_data(config, selected_window))
     html_output = write_html_report(selected_range, gathered)
-    print(f"[info] Wrote HTML overview: {html_output}")
+    print(f"[info] Wrote HTML report: {html_output}")
     print("Thanks for using Falcon Report. Bye!")
 
     return 0
