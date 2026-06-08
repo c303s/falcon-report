@@ -301,7 +301,7 @@ def load_env_file(path: Path) -> dict[str, str]:
 
 
 def write_env_file(path: Path, values: dict[str, str]) -> None:
-    lines = ["# CrowdStrike Falcon overview configuration"]
+    lines = ["# CrowdStrike Falcon report configuration"]
     for key in ENV_ORDER:
         lines.append(f"{key}={env_quote(values.get(key, ''))}")
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -413,7 +413,7 @@ def build_date() -> str:
 
 
 def print_banner() -> None:
-    print("Welcome to Falcon Overview")
+    print("Welcome to Falcon Report")
     print(f"Version {VERSION} | Build date {build_date()}")
     print("This is not an official CrowdStrike tool.")
     print()
@@ -947,29 +947,9 @@ def summarise_records(
     return counters
 
 
-def approximate_crowdscore(
-    detections_by_severity: Counter[str],
-    cases_by_severity: Counter[str],
-    ngsiem_detections_by_severity: Counter[str],
-    ngsiem_leads_confidence: Counter[str],
-) -> float:
-    score = 0.0
-    score += detections_by_severity.get("critical", 0) * 6.0
-    score += detections_by_severity.get("high", 0) * 3.5
-    score += detections_by_severity.get("medium", 0) * 2.0
-    score += cases_by_severity.get("critical", 0) * 8.0
-    score += cases_by_severity.get("high", 0) * 5.0
-    score += cases_by_severity.get("medium", 0) * 3.0
-    score += ngsiem_detections_by_severity.get("critical", 0) * 3.0
-    score += ngsiem_detections_by_severity.get("high", 0) * 2.0
-    score += ngsiem_leads_confidence.get("high", 0) * 1.5
-    score += ngsiem_leads_confidence.get("medium", 0) * 1.0
-    return round(min(100.0, score), 1)
-
-
-def case_severity_bucket(incident: dict[str, Any]) -> str:
+def case_severity_bucket(case_record: dict[str, Any]) -> str:
     for key in ("severity", "max_severity", "fine_score"):
-        value = incident.get(key)
+        value = case_record.get(key)
         if value is not None:
             return normalize_severity_value(value)
     return "unknown"
@@ -1798,62 +1778,6 @@ class FalconOverviewClient:
             truncated = True
         return results, truncated
 
-    def query_incidents(self) -> list[dict[str, Any]]:
-        incident_ids: list[str] = []
-        offset = 0
-        page_size = 500
-        filter_value = merge_filters(
-            f"modified_timestamp:>='{self.config.start_iso}'",
-            f"modified_timestamp:<='{self.config.end_iso}'",
-        )
-        while True:
-            response = self.api.request(
-                "GET",
-                "/incidents/queries/incidents/v1",
-                params={
-                    "offset": offset,
-                    "limit": page_size,
-                    "sort": "modified_timestamp.desc",
-                    "filter": filter_value,
-                },
-            )
-            ensure_success(response, "incident query")
-            page_ids = [value for value in get_resources(response) if isinstance(value, str)]
-            if not page_ids:
-                break
-            incident_ids.extend(page_ids)
-            if len(page_ids) < page_size:
-                break
-            offset += page_size
-
-        details: list[dict[str, Any]] = []
-        for batch in chunked(incident_ids, 100):
-            response = self.api.request(
-                "POST",
-                "/incidents/entities/incidents/GET/v1",
-                body={"ids": batch},
-            )
-            ensure_success(response, "incident details")
-            for item in get_resources(response):
-                if isinstance(item, dict):
-                    details.append(item)
-        return details
-
-    def crowdscore(self) -> float | None:
-        response = self.api.request(
-            "GET",
-            "/incidents/combined/crowdscores/v1",
-            params={"limit": 10, "sort": "modified_timestamp.desc"},
-        )
-        ensure_success(response, "crowdscore")
-        numeric_values: list[float] = []
-        for item in get_resources(response):
-            numeric_values.extend(find_numeric_candidates(item, {"crowdscore", "score", "fine_score"}))
-        if not numeric_values:
-            return None
-        best = max(numeric_values)
-        return best / 10.0 if best > 100 else best
-
     def query_case_ids_for_window(self, report_window: timedelta) -> list[str]:
         case_ids: list[str] = []
         offset = 0
@@ -2657,7 +2581,7 @@ def build_html_report(range_label: str, gathered: GatheredData) -> str:
 <head>
     <meta charset=\"utf-8\" />
     <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />
-    <title>Falcon Overview - Current</title>
+    <title>Falcon Report - Current</title>
     <style>
         :root {{
             --bg0: #000000;
@@ -2813,7 +2737,7 @@ def build_html_report(range_label: str, gathered: GatheredData) -> str:
 <body>
     <div class=\"wrap\" id=\"top\">
         <section class=\"hero\">
-            <h1>Falcon Overview</h1>
+            <h1>Falcon Report</h1>
             <div class=\"sub\">Version {html.escape(VERSION)} (build date {html.escape(build_date())})</div>
             <div class=\"sub\">Tenant: {html.escape(gathered.cid_name)}</div>
             <div class=\"sub\">CID: {html.escape(gathered.cid)}</div>
@@ -3339,7 +3263,7 @@ def main() -> int:
     gathered = run_with_spinner("Gathering data ...", lambda: gather_data(config, selected_window))
     html_output = write_html_report(selected_range, gathered)
     print(f"[info] Wrote HTML overview: {html_output}")
-    print("Thanks for using Falcon Overview. Bye!")
+    print("Thanks for using Falcon Report. Bye!")
 
     return 0
 

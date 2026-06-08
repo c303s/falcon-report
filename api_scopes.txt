@@ -3,5 +3,4 @@ Required minimum scopes:
 - cases.read
 
 Optional scopes:
-- incidents.read
 - falcon_complete_dashboard

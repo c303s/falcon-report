@@ -4,7 +4,7 @@ set -euo pipefail
 OWNER="c303s"
 REPO="falcon-report"
 BRANCH="main"
-SCRIPT_NAME="falcon_overview.py"
+SCRIPT_NAME="falcon_report.py"
 
 log() {
   printf "[install] %s\n" "$1"

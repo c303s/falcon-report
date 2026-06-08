@@ -2,7 +2,13 @@
 
 This repository contains a Python report generator for CrowdStrike Falcon.
 
-The main script is `falcon_overview.py`.
+Current version: `0.01a`
+
+Build date: `08.06.2026`
+
+Disclaimer: This is an independent community project and is not an official CrowdStrike tool.
+
+The main script is `falcon_report.py`.
 
 It uses only the Python standard library (no SDK and no third-party Python package dependencies).
 
@@ -20,7 +26,6 @@ Minimum required:
 
 Optional (enables direct API-backed paths where available):
 
-- `incidents.read`
 - `falcon_complete_dashboard`
 
 The same list is stored in `api_scopes.txt`.
@@ -37,14 +42,20 @@ The installer:
 
 - verifies Python 3.10+
 - resolves the latest commit SHA on `main` via GitHub API
-- downloads a SHA-pinned copy of `falcon_overview.py`
+- downloads a SHA-pinned copy of `falcon_report.py`
 - launches it
 
 Manual alternative:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/c303s/falcon-report/main/falcon_overview.py -o falcon_overview.py
-python3 falcon_overview.py
+curl -fsSL https://raw.githubusercontent.com/c303s/falcon-report/main/falcon_report.py -o falcon_report.py
+python3 falcon_report.py
+```
+
+Windows (PowerShell) alternative:
+
+```powershell
+powershell -ExecutionPolicy Bypass -Command "iwr -useb https://raw.githubusercontent.com/c303s/falcon-report/main/falcon_report.py -OutFile falcon_report.py; python falcon_report.py"
 ```
 
 ## First Run Behavior
@@ -56,11 +67,5 @@ If `.env` already exists, the script uses it and asks whether you want to update
 ## Re-run Setup
 
 ```bash
-python3 falcon_overview.py --setup
+python3 falcon_report.py --setup
 ```
-
-## Notes
-
-- `CrowdScore` uses the Falcon Incidents API endpoint when available.
-- If incidents access is unavailable, the script falls back to an estimated score based on available activity signals.
-- OverWatch and some NG-SIEM paths are tenant/scope dependent; optional filters can be stored in `.env`.

@@ -13,7 +13,6 @@ These scopes are needed for the current CLI flow:
 
 These are only needed if you want the direct API-backed versions of certain sections instead of the built-in fallback behavior:
 
-- `incidents.read` - direct CrowdScore / incidents-backed metrics
 - `falcon_complete_dashboard` - primary OverWatch analyzed-events endpoint
 
 ## Notes
