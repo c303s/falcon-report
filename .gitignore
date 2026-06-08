@@ -1,8 +1,7 @@
 .env
 __pycache__/
 .venv/.env
-__pycache__/
 *.pyc
 .DS_Store
-_patch4.py
+.DS-Store
 *.html

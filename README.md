@@ -14,12 +14,10 @@ It uses only the Python standard library (no SDK and no third-party Python packa
 
 ## Files
 
-- `falcon_report.py`
-- `install.sh`
-- `api_scopes.txt`
-- `requirements.md`
-- `.gitignore`
-- `README.md`
+- `README.md`: General details
+- `api_scopes.txt`: Require API client scopes
+- `falcon_report.py`: main file
+- `install.sh`: help you to get started
 
 ## Requirements
 
