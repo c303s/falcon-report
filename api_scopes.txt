@@ -1,0 +1,7 @@
+Required minimum scopes:
+- alerts.read
+- cases.read
+
+Optional scopes:
+- incidents.read
+- falcon_complete_dashboard
