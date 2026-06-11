@@ -68,9 +68,6 @@ ANSI_RESET = "\033[0m"
 ANSI_RED = "\033[31m"
 ANSI_GREEN = "\033[32m"
 ANSI_PATTERN = re.compile(r"\x1b\[[0-9;]*m")
-CID_NAME_OVERRIDES: dict[str, str] = {
-    "6aa60503a3894d2ab204a04b0562545b": "AVEMO S.r.L. & Co. KG",
-}
 
 
 @dataclass
@@ -155,6 +152,31 @@ class GatheredData:
     cid: str
 
 
+@dataclass
+class PreflightCheck:
+    name: str
+    required: bool
+    ok: bool
+    detail: str = ""
+
+
+@dataclass
+class PreflightReport:
+    checks: list[PreflightCheck]
+
+    @property
+    def required_ok(self) -> bool:
+        return all(check.ok for check in self.checks if check.required)
+
+    @property
+    def missing_required(self) -> list[PreflightCheck]:
+        return [check for check in self.checks if check.required and not check.ok]
+
+    @property
+    def missing_optional(self) -> list[PreflightCheck]:
+        return [check for check in self.checks if not check.required and not check.ok]
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Build an ASCII CrowdStrike Falcon activity overview."
@@ -174,7 +196,10 @@ def parse_args() -> argparse.Namespace:
 
 
 def prompt_text(prompt: str, default: str = "", secret: bool = False) -> str:
-    suffix = f" [{default}]" if default else ""
+    if default:
+        suffix = " [saved]" if secret else f" [{default}]"
+    else:
+        suffix = ""
     value = getpass.getpass(f"{prompt}{suffix}: ") if secret else input(f"{prompt}{suffix}: ")
     return value.strip() or default
 
@@ -1146,11 +1171,6 @@ def infer_cid_name(config: Config, *datasets: list[dict[str, Any]]) -> str:
     candidates: list[str] = []
     for dataset in datasets:
         extract_named_string_candidates(dataset, preferred_keys, candidates)
-    # Also scan broadly for explicit tenant mentions to avoid parent/MSSP labels winning by frequency.
-    broad: list[str] = []
-    for dataset in datasets:
-        extract_all_string_candidates(dataset, broad)
-    candidates.extend(value for value in broad if "avemo" in value.lower())
 
     filtered = [
         value
@@ -1174,6 +1194,8 @@ def infer_cid_name(config: Config, *datasets: list[dict[str, Any]]) -> str:
             if "@" in lowered:
                 return True
             if re.search(r"\b[a-z0-9-]+\.[a-z]{2,}\b", lowered):
+                return True
+            if value.count(".") >= 2 and " " not in value:
                 return True
             return any(token in lowered for token in ("server", "workstation", "host", "-to-", "group"))
 
@@ -1222,6 +1244,9 @@ def infer_cid_name(config: Config, *datasets: list[dict[str, Any]]) -> str:
         )
         return sanitize_name(ranked[0][0])
 
+    parsed_host = urllib.parse.urlparse(config.base_url).hostname or ""
+    if parsed_host:
+        return parsed_host
     if config.member_cid:
         return config.member_cid
     return "unknown"
@@ -1326,7 +1351,6 @@ def gather_data(config: Config, report_window: timedelta) -> GatheredData:
     overwatch = fetch_overwatch_summary(config, report_window)
     cid = infer_cid_value(config, records_365d, cases_365d, leads_365d)
     cid_name = infer_cid_name(config, records_365d, cases_365d, leads_365d)
-    cid_name = CID_NAME_OVERRIDES.get(cid, cid_name)
     return GatheredData(
         core_records=core_records,
         core_records_365d=core_records_365d,
@@ -1601,13 +1625,110 @@ class FalconOverviewClient:
         self.config = config
         self.api = CrowdStrikeAPI(config)
 
-    def validate(self) -> None:
-        response = self.api.request(
+    def run_preflight_checks(self) -> PreflightReport:
+        checks: list[PreflightCheck] = []
+
+        def check_request(
+            name: str,
+            required: bool,
+            method: str,
+            path: str,
+            *,
+            params: dict[str, Any] | None = None,
+            body: dict[str, Any] | list[Any] | None = None,
+        ) -> dict[str, Any] | None:
+            try:
+                response = self.api.request(method, path, params=params, body=body)
+                ensure_success(response, name)
+                checks.append(PreflightCheck(name=name, required=required, ok=True))
+                return response
+            except Exception as exc:
+                checks.append(PreflightCheck(name=name, required=required, ok=False, detail=str(exc)))
+                return None
+
+        check_request(
+            "alerts.read (query)",
+            True,
             "GET",
             "/alerts/queries/alerts/v2",
             params={"limit": 1, "sort": "created_timestamp.desc"},
         )
-        ensure_success(response, "alerts.read pre-flight check")
+        check_request(
+            "alerts.read (combined)",
+            True,
+            "POST",
+            "/alerts/combined/alerts/v1",
+            body={
+                "limit": 1,
+                "sort": "created_timestamp.desc",
+                "filter": window_filter(timedelta(days=1), "created_timestamp"),
+            },
+        )
+        check_request(
+            "alerts.read (aggregate)",
+            True,
+            "POST",
+            "/alerts/aggregates/alerts/v2",
+            params={"include_hidden": "true"},
+            body=[
+                {
+                    "field": "product",
+                    "filter": window_filter(timedelta(days=1), "created_timestamp"),
+                    "type": "terms",
+                    "size": 5,
+                    "sort": "_count|desc",
+                }
+            ],
+        )
+
+        cases_query = check_request(
+            "cases.read (query)",
+            True,
+            "GET",
+            "/cases/queries/cases/v1",
+            params={
+                "offset": 0,
+                "limit": 1,
+                "sort": "status.desc",
+                "filter": window_filter(timedelta(days=30), "created_timestamp"),
+            },
+        )
+        if cases_query is not None:
+            ids = [value for value in get_resources(cases_query) if isinstance(value, str)]
+            if ids:
+                check_request(
+                    "cases.read (entities)",
+                    True,
+                    "POST",
+                    "/cases/entities/cases/v2",
+                    body={"ids": ids[:1]},
+                )
+            else:
+                checks.append(
+                    PreflightCheck(
+                        name="cases.read (entities)",
+                        required=True,
+                        ok=True,
+                        detail="no recent case IDs in window; entity call skipped",
+                    )
+                )
+
+        check_request(
+            "falcon_complete_dashboard (ow events)",
+            False,
+            "GET",
+            "/overwatch-dashboards/aggregates/ow-events-global-counts/v1",
+            params={"filter": None},
+        )
+        check_request(
+            "falcon_complete_dashboard (ow detections)",
+            False,
+            "GET",
+            "/overwatch-dashboards/aggregates/detections-global-counts/v1",
+            params={"filter": None},
+        )
+
+        return PreflightReport(checks=checks)
 
     def aggregate_alert_terms(self, field: str, filter_value: str = "") -> Counter[str]:
         response = self.api.request(
@@ -3248,8 +3369,25 @@ def main() -> int:
     def validate_current_config(current_config: Config) -> bool:
         try:
             print("[info] Running pre-flight access check...", end=" ", flush=True)
-            FalconOverviewClient(current_config).validate()
-            print(color_text("done", ANSI_GREEN))
+            report = FalconOverviewClient(current_config).run_preflight_checks()
+            if report.required_ok:
+                print(color_text("done", ANSI_GREEN))
+            else:
+                print(color_text("failed", ANSI_RED))
+
+            if report.missing_required:
+                print("[error] Missing required API access:")
+                for check in report.missing_required:
+                    detail = f" - {check.detail}" if check.detail else ""
+                    print(f"  - {check.name}{detail}")
+                return False
+
+            if report.missing_optional:
+                print("[warn] Optional API access unavailable (non-blocking):")
+                for check in report.missing_optional:
+                    detail = f" - {check.detail}" if check.detail else ""
+                    print(f"  - {check.name}{detail}")
+
             return True
         except Exception as exc:
             print(f"[error] Authentication or API access failed: {exc}", file=sys.stderr)
