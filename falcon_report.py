@@ -60,7 +60,6 @@ CATEGORY_LABEL_MAP = {
     "thirdparty": "third party",
     "automated-lead": "automated leads",
     "automated-lead-context": "automated lead context",
-    "overwatch": "overwatch",
 }
 
 VERSION = "0.01a"
@@ -80,9 +79,6 @@ class Config:
     include_hidden_alerts: bool
     max_detail_records: int
     detections_filter: str
-    overwatch_analyzed_events_filter: str
-    overwatch_hunting_leads_filter: str
-    overwatch_triggered_detections_filter: str
     ngsiem_detections_filter: str
     ngsiem_detections_category_field: str
     ngsiem_automated_leads_filter: str
@@ -122,24 +118,6 @@ class RecordSummary:
 
 
 @dataclass
-class OverwatchMetric:
-    label: str
-    value: int | None
-    source: str
-    note: str | None = None
-
-
-@dataclass
-class OverwatchSummary:
-    analyzed_events: int | None
-    endpoint_hunting_leads: int | None
-    detections: int | None
-    analyzed_source: str = ""
-    endpoint_hunting_leads_source: str = ""
-    detections_source: str = ""
-
-
-@dataclass
 class GatheredData:
     core_records: list[dict[str, Any]]
     core_records_365d: list[dict[str, Any]]
@@ -147,7 +125,6 @@ class GatheredData:
     cases_365d: list[dict[str, Any]]
     leads: list[dict[str, Any]]
     leads_365d: list[dict[str, Any]]
-    overwatch: OverwatchSummary
     cid_name: str
     cid: str
 
@@ -367,9 +344,6 @@ def config_from_values(values: dict[str, str]) -> Config:
         include_hidden_alerts=False,
         max_detail_records=1000,
         detections_filter="",
-        overwatch_analyzed_events_filter="",
-        overwatch_hunting_leads_filter="",
-        overwatch_triggered_detections_filter="",
         ngsiem_detections_filter="",
         ngsiem_detections_category_field="type",
         ngsiem_automated_leads_filter="",
@@ -1348,7 +1322,6 @@ def gather_data(config: Config, report_window: timedelta) -> GatheredData:
     ]
     cases = client.fetch_cases_for_window(report_window)
     cases_365d = client.fetch_cases_for_window(AGE_CHART_WINDOW)
-    overwatch = fetch_overwatch_summary(config, report_window)
     cid = infer_cid_value(config, records_365d, cases_365d, leads_365d)
     cid_name = infer_cid_name(config, records_365d, cases_365d, leads_365d)
     return GatheredData(
@@ -1358,7 +1331,6 @@ def gather_data(config: Config, report_window: timedelta) -> GatheredData:
         cases_365d=cases_365d,
         leads=leads,
         leads_365d=leads_365d,
-        overwatch=overwatch,
         cid_name=cid_name,
         cid=cid,
     )
@@ -1713,21 +1685,6 @@ class FalconOverviewClient:
                     )
                 )
 
-        check_request(
-            "falcon_complete_dashboard (ow events)",
-            False,
-            "GET",
-            "/overwatch-dashboards/aggregates/ow-events-global-counts/v1",
-            params={"filter": None},
-        )
-        check_request(
-            "falcon_complete_dashboard (ow detections)",
-            False,
-            "GET",
-            "/overwatch-dashboards/aggregates/detections-global-counts/v1",
-            params={"filter": None},
-        )
-
         return PreflightReport(checks=checks)
 
     def aggregate_alert_terms(self, field: str, filter_value: str = "") -> Counter[str]:
@@ -1940,155 +1897,6 @@ class FalconOverviewClient:
                     details.append(item)
         return details
 
-    def overwatch_events_count(self, filter_value: str) -> int:
-        response = self.api.request(
-            "GET",
-            "/overwatch-dashboards/aggregates/ow-events-global-counts/v1",
-            params={"filter": filter_value or None},
-        )
-        ensure_success(response, "overwatch events count")
-        return parse_totalish(response)
-
-    def overwatch_detections_count(self, filter_value: str) -> int:
-        response = self.api.request(
-            "GET",
-            "/overwatch-dashboards/aggregates/detections-global-counts/v1",
-            params={"filter": filter_value or None},
-        )
-        ensure_success(response, "overwatch detections count")
-        return parse_totalish(response)
-
-def fetch_overwatch_metrics(config: Config, report_window: timedelta, range_label: str) -> list[OverwatchMetric]:
-    client = FalconOverviewClient(config)
-    results: list[OverwatchMetric] = []
-
-    try:
-        analyzed = client.overwatch_events_count(config.overwatch_analyzed_events_filter)
-        results.append(
-            OverwatchMetric(
-                label="OverWatch analyzed events",
-                value=analyzed,
-                source="overwatch-dashboards ow-events-global-counts",
-            )
-        )
-    except Exception as exc:
-        try:
-            query_total = client.alerts_total_for_window(AGE_CHART_WINDOW, "", include_hidden=True)
-            results.append(
-                OverwatchMetric(
-                    label="OverWatch analyzed events",
-                    value=query_total,
-                    source="alerts query total fallback (365d include_hidden=true)",
-                    note=f"primary endpoint unavailable: {exc}",
-                )
-            )
-        except Exception as query_exc:
-            try:
-                fallback = client.aggregate_alert_terms_for_window(
-                    "product",
-                    AGE_CHART_WINDOW,
-                    "",
-                    include_hidden=True,
-                )
-                results.append(
-                    OverwatchMetric(
-                        label="OverWatch analyzed events",
-                        value=sum(fallback.values()),
-                        source="alerts aggregate fallback (365d all products)",
-                        note=f"primary endpoint unavailable: {exc}; query fallback unavailable: {query_exc}",
-                    )
-                )
-            except Exception as fallback_exc:
-                results.append(
-                    OverwatchMetric(
-                        label="OverWatch analyzed events",
-                        value=None,
-                        source="unavailable",
-                        note=f"primary endpoint unavailable: {exc}; fallback failed: {fallback_exc}",
-                    )
-                )
-
-    try:
-        hunting = client.aggregate_alert_terms_for_window(
-            "product",
-            AGE_CHART_WINDOW,
-            config.overwatch_hunting_leads_filter,
-            include_hidden=True,
-        )
-        leads = hunting.get("overwatch", 0)
-        results.append(
-            OverwatchMetric(
-                label="OverWatch endpoint hunting leads",
-                value=leads,
-                source=f"alerts aggregate product=overwatch ({range_label})",
-            )
-        )
-    except Exception as exc:
-        results.append(
-            OverwatchMetric(
-                label="OverWatch endpoint hunting leads",
-                value=None,
-                source="unavailable",
-                note=str(exc),
-            )
-        )
-
-    try:
-        detections = client.overwatch_detections_count(config.overwatch_triggered_detections_filter)
-        results.append(
-            OverwatchMetric(
-                label="OverWatch detections triggered",
-                value=detections,
-                source="overwatch-dashboards detections-global-counts",
-            )
-        )
-    except Exception as exc:
-        results.append(
-            OverwatchMetric(
-                label="OverWatch detections triggered",
-                value=None,
-                source="unavailable",
-                note=str(exc),
-            )
-        )
-
-    return results
-
-
-def fetch_overwatch_summary(config: Config, report_window: timedelta) -> OverwatchSummary:
-    range_label = next(
-        (label for label, delta in REPORT_RANGE_TO_DELTA.items() if delta == report_window),
-        DEFAULT_REPORT_RANGE,
-    )
-    metrics = fetch_overwatch_metrics(config, report_window, range_label)
-    analyzed: int | None = None
-    leads: int | None = None
-    detections: int | None = None
-    analyzed_source = ""
-    leads_source = ""
-    detections_source = ""
-    for metric in metrics:
-        lowered = metric.label.lower()
-        if "analyzed events" in lowered:
-            analyzed = metric.value
-            analyzed_source = metric.source
-        elif "endpoint hunting leads" in lowered:
-            leads = metric.value
-            leads_source = metric.source
-        elif "detections triggered" in lowered:
-            detections = metric.value
-            detections_source = metric.source
-
-    return OverwatchSummary(
-        analyzed_events=analyzed,
-        endpoint_hunting_leads=leads,
-        detections=detections,
-        analyzed_source=analyzed_source,
-        endpoint_hunting_leads_source=leads_source,
-        detections_source=detections_source,
-    )
-
-
 def prompt_selected_report_range(default: str = DEFAULT_REPORT_RANGE) -> str:
     return prompt_report_range(default)
 
@@ -2129,17 +1937,6 @@ def render_automated_leads_section(leads: list[dict[str, Any]]) -> None:
     )
     print()
     render_counter("Automated Leads by Confidence (365d)", confidence, CONFIDENCE_BANDS)
-
-
-def render_overwatch_summary(summary: OverwatchSummary, range_label: str) -> None:
-    render_title("OverWatch")
-    analyzed = str(summary.analyzed_events) if summary.analyzed_events is not None else "n/a"
-    leads = str(summary.endpoint_hunting_leads) if summary.endpoint_hunting_leads is not None else "n/a"
-    detections = str(summary.detections) if summary.detections is not None else "n/a"
-    print(f"Analyzed events (current): {analyzed}")
-    print(f"Endpoint hunting leads (365d): {leads}")
-    print(f"Detections triggered (current): {detections}")
-    print()
 
 
 def generate_report(config: Config, range_label: str, gathered: GatheredData) -> None:
@@ -2622,18 +2419,6 @@ def build_html_report(range_label: str, gathered: GatheredData) -> str:
                 f'<button class="range-pill{active_class}" data-range="{label}">{label}</button>'
             )
         selector_button_html = "".join(selector_button_html_parts)
-
-        def metric_badge(source: str, value: int | None) -> tuple[str, str]:
-            lowered = source.lower()
-            if value is None:
-                return ("Unavailable", "badge-unavailable")
-            if "fallback" in lowered:
-                return ("Fallback", "badge-fallback")
-            return ("Available", "badge-available")
-
-        analyzed_badge_text, analyzed_badge_class = metric_badge(gathered.overwatch.analyzed_source, gathered.overwatch.analyzed_events)
-        leads_badge_text, leads_badge_class = metric_badge(gathered.overwatch.endpoint_hunting_leads_source, gathered.overwatch.endpoint_hunting_leads)
-        detections_badge_text, detections_badge_class = metric_badge(gathered.overwatch.detections_source, gathered.overwatch.detections)
 
         age_rows: list[tuple[str, str, str, int, float, float]] = []
         grouped_ages: dict[tuple[str, str], list[float]] = {}

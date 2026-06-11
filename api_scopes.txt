@@ -3,4 +3,3 @@ Required minimum scopes:
 - cases.read
 
 Optional scopes:
-- falcon_complete_dashboard

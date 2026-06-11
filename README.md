@@ -31,10 +31,6 @@ Minimum required:
 - `alerts.read`
 - `cases.read`
 
-Optional (enables direct API-backed paths where available):
-
-- `falcon_complete_dashboard`
-
 The same list is stored in `api_scopes.txt`.
 
 ## Install And Run
